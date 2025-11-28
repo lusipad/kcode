@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+option csharp_namespace = "Kcode.Protos";
+
+package control;
+
+message Empty {}
+
+message CommandRequest {
+  string text = 1;
+}
+
+message CommandReply {
+  bool success = 1;
+  string message = 2;
+}
+
+message SetParamRequest {
+  string key = 1;
+  double value = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double feed = 4;
+  double speed = 5;
+  double temp = 6;
+  string state = 7;
+  string alarm = 8;
+}
+
+message ParamsReply {
+  map<string, double> parameters = 1;
+}
+
+message Tool {
+  int32 id = 1;
+  double diameter = 2;
+  double length = 3;
+  string description = 4;
+}
+
+message ToolsReply {
+  repeated Tool tools = 1;
+}
+
+service ControlService {
+  rpc Execute (CommandRequest) returns (CommandReply);
+  rpc SetParameter (SetParamRequest) returns (CommandReply);
+  rpc Reset (Empty) returns (CommandReply);
+  rpc EStop (Empty) returns (CommandReply);
+  rpc ToggleFeedHold (Empty) returns (CommandReply);
+  rpc StreamStatus (StatusRequest) returns (stream StatusResponse);
+  rpc GetParameters (Empty) returns (ParamsReply);
+  rpc GetTools (Empty) returns (ToolsReply);
+}
