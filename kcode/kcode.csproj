@@ -22,4 +22,10 @@
     <Protobuf Include="Protos\control.proto" GrpcServices="Client" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Config\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

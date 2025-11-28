@@ -1,0 +1,284 @@
+# KCode v2 配置示例 - REST 模式
+# 这是一个简化的配置示例，展示 v2 架构的核心功能
+
+app:
+  name: "kcode"
+  version: "2.0.0"
+  workspace: "KCode"
+  working_directory: "D:\\Repos\\kcode"
+  header_welcome: "欢迎回来！"
+  prompt_placeholder: "输入命令，例如 help"
+  slogan: "现代化命令行 CNC 控制终端"
+  suggestion_text: "Try \"/help\" to list commands."
+  branch: "main"
+  tokens: "0 tokens"
+  permissions: "v2 mode"
+
+# 传输层配置 - REST 模式
+transport:
+  type: "rest"
+  base_url: "http://localhost:5000/api/v1/cnc"
+  timeout_ms: 5000
+
+  # 认证配置 (可选) - 测试 API 不需要认证
+  # auth:
+  #   type: "bearer"
+  #   token: "${CNC_API_TOKEN}"
+
+  # 请求头 (可选)
+  headers:
+    Content-Type: "application/json"
+    X-Client: "kcode-v2"
+
+  # REST 端点定义
+  endpoints:
+    execute:
+      method: "POST"
+      path: "/execute"
+      request:
+        body:
+          text: "string"
+      response:
+        success: "$.success"
+        message: "$.message"
+
+    get_status:
+      method: "GET"
+      path: "/status"
+      response:
+        x: "$.data.X"
+        y: "$.data.Y"
+        z: "$.data.Z"
+        feed: "$.data.Feed"
+        speed: "$.data.Speed"
+        state: "$.data.State"
+        alarm: "$.data.Alarm"
+        temp: "$.data.Temp"
+
+    # 轮询模式 (用于实时状态)
+    poll_status:
+      method: "GET"
+      path: "/status"
+      polling:
+        enabled: true
+        interval_ms: 1000
+      response:
+        x: "$.data.X"
+        y: "$.data.Y"
+        z: "$.data.Z"
+        feed: "$.data.Feed"
+        speed: "$.data.Speed"
+        state: "$.data.State"
+        temp: "$.data.Temp"
+
+    get_parameters:
+      method: "GET"
+      path: "/params"
+      response:
+        parameters: "$.data"
+
+    set_parameter:
+      method: "POST"
+      path: "/set_param"
+      request:
+        body:
+          key: "string"
+          value: "double"
+      response:
+        success: "$.success"
+        message: "$.message"
+
+    estop:
+      method: "POST"
+      path: "/emergency_stop"
+      response:
+        success: "$.success"
+        message: "$.message"
+
+    reset:
+      method: "POST"
+      path: "/reset"
+      response:
+        success: "$.success"
+        message: "$.message"
+
+# API 接口定义 (协议无关)
+api:
+  execute:
+    description: "执行 G 代码或命令"
+    request:
+      text: "string"
+    response:
+      success: "bool"
+      message: "string"
+
+  stream_status:
+    description: "获取机器状态流"
+    stream: true
+    response:
+      x: "double"
+      y: "double"
+      z: "double"
+      feed: "double"
+      speed: "double"
+      state: "string"
+      alarm: "string"
+      temp: "double"
+
+# 命令系统配置
+commands:
+  # 系统命令
+  system:
+    help:
+      aliases: ["?", "h"]
+      description: "显示帮助信息"
+      action: "builtin:help"
+
+    exit:
+      aliases: ["quit", "q"]
+      description: "退出程序"
+      action: "builtin:exit"
+
+    status:
+      aliases: ["st"]
+      description: "显示机器状态"
+      action: "builtin:status_panel"
+
+    clear:
+      aliases: ["cls"]
+      description: "清屏"
+      action: "builtin:clear"
+
+  # API 命令 (映射到后端接口)
+  api:
+    # 直接执行 G 代码
+    gcode:
+      pattern: "^[GMgm]\\d+.*"
+      endpoint: "execute"
+      request_mapping:
+        text: "$input"
+      response_template: |
+        {{if .success}}
+        [green]✓[/] {{.message}}
+        {{else}}
+        [red]✗[/] {{.message}}
+        {{end}}
+
+    # 设置参数
+    set:
+      pattern: "^/set\\s+(\\w+)\\s+([\\d.]+)$"
+      description: "设置参数 /set <键> <值>"
+      endpoint: "set_parameter"
+      request_mapping:
+        key: "$1"
+        value: "$2"
+      response_template: |
+        {{if .success}}
+        [green]📝 参数已更新[/]: {{.message}}
+        {{else}}
+        [red]⚠️ 设置失败[/]: {{.message}}
+        {{end}}
+
+    # 获取参数列表
+    params:
+      aliases: ["parameters", "参数"]
+      description: "显示所有参数"
+      endpoint: "get_parameters"
+      response_render: "table"
+
+  # 宏命令 (多步骤序列)
+  macros:
+    home:
+      aliases: ["home_all", "回零"]
+      description: "所有轴回零"
+      steps:
+        - endpoint: "execute"
+          request:
+            text: "G28"
+      response_template: "[green]🏠 回零完成[/]"
+
+    zero_work:
+      aliases: ["清零"]
+      description: "设置当前位置为工件零点"
+      steps:
+        - endpoint: "execute"
+          request:
+            text: "G10 L20 P1 X0 Y0 Z0"
+      response_template: "[green]📍 工件零点已设置[/]"
+
+    auto_probe:
+      aliases: ["对刀"]
+      description: "自动对刀"
+      steps:
+        - endpoint: "execute"
+          request:
+            text: "G91 G38.2 Z-50 F50"
+        - endpoint: "execute"
+          request:
+            text: "G90 G10 L20 P1 Z0"
+        - endpoint: "execute"
+          request:
+            text: "G91 G0 Z5"
+      response_template: "[green]🔧 对刀完成[/]"
+
+  # 别名 (简单的命令替换)
+  aliases:
+    mv: "G0"
+    rapid: "G0"
+    feed: "G1"
+    主轴开: "M3"
+    主轴关: "M5"
+    冷却开: "M8"
+    冷却关: "M9"
+
+  # 快捷键绑定
+  shortcuts:
+    Escape:
+      action: "api:estop"
+      feedback: "[red]🚨 紧急停止![/]"
+
+    Space:
+      action: "api:feed_hold"
+      feedback: "[yellow]⏸️ 进给保持[/]"
+
+    F1:
+      action: "builtin:help"
+
+    F5:
+      action: "builtin:status_panel"
+
+# 主题配置
+theme:
+  name: "Claude 暗色"
+  colors:
+    background: "#000000"
+    foreground: "#F4E3D7"
+    accent_primary: "#FF7043"
+    accent_secondary: "#4DD0E1"
+    accent_tertiary: "#CE93D8"
+    success: "#66BB6A"
+    warning: "#FFEE58"
+    error: "#EF5350"
+    panel_border: "#FF7043"
+    panel_divider: "#F57C00"
+    header_text: "#F4E3D7"
+    prompt_border: "#7E57C2"
+    prompt_text: "#EDE7F6"
+    footer_notice: "#FF4081"
+    footer_badge: "#4DD0E1"
+  icons:
+    enabled: true
+    set:
+      success: "✓"
+      error: "✗"
+      warning: "⚠"
+      info: "ℹ"
+      home: "🏠"
+      tool: "🔧"
+      temp: "🌡️"
+      speed: "🚀"
+      position: "📍"
+      alarm: "🚨"
+      pause: "⏸"
+      play: "▶"
+      stop: "⏹"

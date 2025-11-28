@@ -1,0 +1,231 @@
+# KCode v2 配置 - REST 测试模式
+# 连接到本地测试 API 服务 (localhost:5000)
+
+app:
+  name: "kcode"
+  version: "2.0.0"
+  workspace: "KCode"
+  working_directory: "D:\\Repos\\kcode"
+  header_welcome: "欢迎回来！"
+  prompt_placeholder: "输入命令，例如 help"
+  slogan: "现代化命令行 CNC 控制终端"
+  suggestion_text: "Try \"/help\" to list commands."
+  branch: "main"
+  tokens: "0 tokens"
+  permissions: "v2 mode"
+
+# 传输层配置 - REST 模式
+transport:
+  type: "rest"
+  base_url: "http://localhost:5000/api/v1/cnc"
+  timeout_ms: 5000
+
+  # 请求头
+  headers:
+    Content-Type: "application/json"
+    X-Client: "kcode-v2-test"
+
+  # REST 端点定义
+  endpoints:
+    execute:
+      method: "POST"
+      path: "/execute"
+      request:
+        body:
+          text: "string"
+      response:
+        success: "$.success"
+        message: "$.message"
+
+    get_status:
+      method: "GET"
+      path: "/status"
+      response:
+        x: "$.data.X"
+        y: "$.data.Y"
+        z: "$.data.Z"
+        feed: "$.data.Feed"
+        speed: "$.data.Speed"
+        state: "$.data.State"
+        alarm: "$.data.Alarm"
+        temp: "$.data.Temp"
+
+    poll_status:
+      method: "GET"
+      path: "/status"
+      polling:
+        enabled: true
+        interval_ms: 1000
+      response:
+        x: "$.data.X"
+        y: "$.data.Y"
+        z: "$.data.Z"
+        feed: "$.data.Feed"
+        speed: "$.data.Speed"
+        state: "$.data.State"
+        temp: "$.data.Temp"
+
+    get_parameters:
+      method: "GET"
+      path: "/params"
+      response:
+        parameters: "$.data"
+
+    set_parameter:
+      method: "POST"
+      path: "/set_param"
+      request:
+        body:
+          key: "string"
+          value: "double"
+      response:
+        success: "$.success"
+        message: "$.message"
+
+# 命令系统配置
+commands:
+  # 系统命令
+  system:
+    help:
+      aliases: ["?", "h"]
+      description: "显示帮助信息"
+      action: "builtin:help"
+
+    exit:
+      aliases: ["quit", "q"]
+      description: "退出程序"
+      action: "builtin:exit"
+
+    status:
+      aliases: ["st"]
+      description: "显示机器状态"
+      action: "builtin:status_panel"
+
+    clear:
+      aliases: ["cls"]
+      description: "清屏"
+      action: "builtin:clear"
+
+  # API 命令
+  api:
+    # G 代码执行
+    gcode:
+      pattern: "^[GMgm]\\d+.*"
+      endpoint: "execute"
+      request_mapping:
+        text: "$input"
+      response_template: |
+        {{if .success}}
+        [green]✓[/] {{.message}}
+        {{else}}
+        [red]✗[/] {{.message}}
+        {{end}}
+
+    # 设置参数
+    set:
+      pattern: "^/set\\s+(\\w+)\\s+([\\d.]+)$"
+      description: "设置参数 /set <键> <值>"
+      endpoint: "set_parameter"
+      request_mapping:
+        key: "$1"
+        value: "$2"
+      response_template: |
+        {{if .success}}
+        [green]📝 参数已更新[/]: {{.message}}
+        {{else}}
+        [red]⚠️ 设置失败[/]: {{.message}}
+        {{end}}
+
+    # 获取参数
+    params:
+      aliases: ["parameters"]
+      description: "显示所有参数"
+      endpoint: "get_parameters"
+      response_render: "table"
+
+  # 宏命令
+  macros:
+    home:
+      aliases: ["home_all", "回零"]
+      description: "所有轴回零"
+      steps:
+        - endpoint: "execute"
+          request:
+            text: "G28"
+      response_template: "[green]🏠 回零完成[/]"
+
+# 数据绑定配置
+bindings:
+  status:
+    source: "stream:poll_status"
+    refresh_ms: 1000
+    fields:
+      x:
+        path: "x"
+        format: "F3"
+      y:
+        path: "y"
+        format: "F3"
+      z:
+        path: "z"
+        format: "F3"
+      feed:
+        path: "feed"
+        format: "F0"
+      speed:
+        path: "speed"
+        format: "F0"
+      state:
+        path: "state"
+      alarm:
+        path: "alarm"
+      temp:
+        path: "temp"
+        format: "F1"
+
+  meta:
+    fields:
+      model:
+        path: "config.app.name"
+      workspace:
+        path: "config.app.version"
+      branch:
+        path: "status.state"
+
+# 布局配置
+layout:
+  structure:
+    type: "rows"
+    children:
+      - id: "header"
+        size: 3
+      - id: "body"
+        ratio: 1
+      - id: "footer"
+        size: 4
+
+  regions:
+    header:
+      content:
+        type: "panel"
+        title: "KCode v2 - REST Test Mode"
+    body:
+      content:
+        type: "text"
+        value: "主体区域"
+    footer:
+      content:
+        type: "text"
+        value: "页脚"
+
+# 主题配置
+theme:
+  name: "Claude 暗色"
+  colors:
+    primary: "#FF7043"
+    secondary: "#4DD0E1"
+    success: "#66BB6A"
+    warning: "#FFEE58"
+    error: "#EF5350"
+  icons:
+    enabled: true

@@ -1,7 +1,7 @@
 ﻿using Spectre.Console;
 using Kcode.Core;
-using Kcode.UI;
-using Kcode.Transport;
+using Kcode.Core.Config;
+using Kcode.Core.Transport;
 
 namespace Kcode;
 
@@ -9,48 +9,98 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        // 1. Setup Console
+        // Setup Console
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        // AnsiConsole.Write(new FigletText("kcode").Color(Color.Orange1)); // Removed redundant print
 
-        // 2. Initialize Core Components
-        var config = new ConfigLoader().Load("Config/config.yaml");
-        var controller = new VirtualCncController(config);
-        var logPath = ConfigHelper.Get(config, "Logs/app.log", "logging", "path");
-        var logger = new LogService(logPath);
-
-        var transportType = ConfigHelper.Get(config, "virtual", "transport", "type").ToString()?.ToLowerInvariant() ?? "virtual";
-        IControlTransport transport;
-        if (transportType == "grpc")
+        // Check for virtual-mode test
+        if (args.Length > 0 && args[0] == "--test-virtual")
         {
-            var endpoint = ConfigHelper.Get(config, "http://localhost:50051", "transport", "endpoint");
-            var timeout = ConfigHelper.Get(config, 2000, "transport", "timeout_ms");
-            try
-            {
-                transport = new GrpcTransport(endpoint, timeout);
-            }
-            catch (Exception ex)
-            {
-                MessageSystem.ShowWarning($"gRPC 初始化失败，回退到虚拟机: {ex.Message}");
-                transport = new VirtualTransport(controller);
-            }
-        }
-        else
-        {
-            transport = new VirtualTransport(controller);
+            await TestVirtualMode.RunAsync();
+            return;
         }
 
-        await using var transportDisposable = transport;
-        await transport.ConnectAsync();
+        // Check for REST API test mode
+        if (args.Length > 0 && args[0] == "--test-rest")
+        {
+            await TestRestApi.RunAsync();
+            return;
+        }
 
-        await using var statusCache = new StatusCache(transport);
-        await statusCache.StartAsync();
+        await RunClientAsync(args);
+    }
 
-        var ui = new LayoutRenderer(config);
-        var router = new CommandRouter(transport, statusCache, config, logger);
+    static async Task RunClientAsync(string[] args)
+    {
+        try
+        {
+            var configPath = ResolveConfigPath(args);
+            AnsiConsole.MarkupLine($"[bold cyan]Starting KCode ({configPath})...[/]\n");
 
-        // 3. Start REPL Loop (Header rendered inside REPL layout)
-        var repl = new ReplEngine(router, statusCache, ui, config, logger);
-        await repl.RunAsync();
+            // 加载 v2 配置
+            var loader = new ConfigLoader();
+            var config = loader.Load(configPath);
+
+            // 创建传输层
+            var transport = TransportFactory.Create(config.Transport);
+
+            // 创建 REPL 引擎
+            var repl = new ReplEngine(config, transport);
+
+            // 运行
+            await repl.RunAsync();
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.WriteException(ex);
+        }
+    }
+
+    static string ResolveConfigPath(string[] args)
+    {
+        var argValue = GetConfigArgument(args);
+        if (!string.IsNullOrWhiteSpace(argValue))
+        {
+            return ConfigPathResolver.Normalize(argValue);
+        }
+
+        var searchRoots = new[]
+        {
+            AppContext.BaseDirectory,
+            Directory.GetCurrentDirectory(),
+            Path.Combine(Directory.GetCurrentDirectory(), "kcode"),
+            Path.Combine(AppContext.BaseDirectory, "..")
+        };
+
+        var detected = ConfigPathResolver.ProbeDefaultLocations(searchRoots);
+        if (detected != null)
+        {
+            return detected;
+        }
+
+        // fallback: use the build输出目录
+        var fallback = Path.Combine(AppContext.BaseDirectory, "Config", "config-virtual.yaml");
+        return ConfigPathResolver.Normalize(fallback);
+    }
+
+    static string? GetConfigArgument(string[] args)
+    {
+        const string Prefix = "--config=";
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+
+            if (arg.Equals("--config", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                return args[i + 1];
+            }
+
+            if (arg.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return arg[Prefix.Length..];
+            }
+        }
+
+        return null;
     }
 }

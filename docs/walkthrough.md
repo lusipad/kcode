@@ -35,10 +35,10 @@ KCode CNC 是一个基于 .NET 9 的命令行 CNC 控制终端，灵感来源于
 - **幽灵文本**: 自动补全预测
 
 #### 扩展性
-- **配置文件**: `config.yaml` (YAML 格式)
+- **配置文件**: `Config/config-v2-*.yaml` (Virtual / REST / REST-Test)
 - **宏定义**: 支持 G 代码序列别名
 - **脚本绑定**: 外部 Python/PowerShell 调用
-- **自定义页脚**: 模板化配置显示内容
+- **自定义页脚**: 布局引擎渲染
 
 ### 2. 视觉设计 (Concept Design)
 
@@ -65,23 +65,25 @@ KCode CNC 是一个基于 .NET 9 的命令行 CNC 控制终端，灵感来源于
 
 #### 项目结构
 ```
-KCode.CNC/
+kcode/
 ├── Config/
-│   └── config.yaml          # 配置文件
+│   ├── config-virtual.yaml
+│   ├── config-rest.yaml
+│   └── config-rest-test.yaml
 ├── Core/
-│   ├── ConfigLoader.cs      # YAML 配置加载器
-│   ├── ReplEngine.cs        # 主 REPL 循环
-│   └── VirtualCncController.cs  # 虚拟 CNC 控制器
-├── UI/
-│   └── LayoutRenderer.cs    # UI 渲染器
-├── Logs/                    # 日志目录
-└── Program.cs               # 程序入口
+│   ├── Commands/             # 命令定义/执行
+│   ├── Config/ConfigLoader   # imports + 变量解析
+│   ├── Transport/            # ITransport + Rest/Virt
+│   ├── UI/                   # LayoutEngine/Binder
+│   └── ReplEngine.cs         # Live REPL
+├── TestVirtualMode.cs / TestRestApi.cs
+└── Program.cs                # 入口
 ```
 
 #### 核心技术栈
-- **.NET 9**: 最新平台
-- **Spectre.Console**: 富文本 CLI 库
-- **YamlDotNet**: YAML 解析
+- **.NET 9** + **Spectre.Console.Live**
+- **YamlDotNet**（多文件配置）
+- **REST/Virt 传输层**（TransportFactory）
 
 #### 配置示例
 ```yaml
@@ -102,32 +104,17 @@ footer:
 ### 4. 测试验证
 
 #### 编译测试
-✅ 项目编译成功
+✅ 项目编译成功（`dotnet build kcode`）
 
 #### 运行测试
-✅ 应用程序启动成功
-
-**测试输出**:
-```
-  _  __   ____               _       
- | |/ /  / ___|   ___     __| |   ___ 
- | ' /  | |      / _ \   / _` |  / _ \
- | . \  | |___  | (_) | | (_| | |  __/
- |_|\_\  \____|  \___/   \__,_|  \___|
-
-───────────────────────────────────
-> home
-● Sending: home
-✅ OK
-> /exit
-```
+- `dotnet run`：默认载入 `Config/config-v2-virtual.yaml`
+- `dotnet run -- --config Config/config-rest-test.yaml`：REST 模式验收
+- `dotnet run -- --test-virtual` / `--test-rest`：自动化脚本
 
 **功能验证**:
-- ✅ Header 渲染成功 (FigletText)
-- ✅ 基础 REPL 循环工作正常
-- ✅ G 代码指令识别 (`home`)
-- ✅ 系统命令识别 (`/exit`)
-- ✅ 虚拟控制器坐标更新
+- ✅ Live Layout 渲染成功（ReplEngine + Spectre.Console）
+- ✅ 命令解析/执行闭环稳定（CommandParser + CommandExecutor）
+- ✅ Virtual/REST 传输热切可用（TransportFactory）
 
 ## 当前限制
 

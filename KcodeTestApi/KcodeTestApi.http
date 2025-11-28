@@ -1,0 +1,6 @@
+@KcodeTestApi_HostAddress = http://localhost:5239
+
+GET {{KcodeTestApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
