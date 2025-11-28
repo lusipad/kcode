@@ -8,7 +8,7 @@
 
 ---
 
-## Phase 1: 核心引擎重构 (优先级: 高)
+## 阶段 1: 核心引擎重构 (优先级: 高)
 
 ### 1.1 配置系统重构
 - [ ] **ConfigSchema.cs** - 定义强类型配置模型
@@ -28,12 +28,12 @@
 - [ ] **DynamicGrpcClient.cs** - 动态 gRPC 调用
   - 根据 schema 配置构建请求
   - 支持 unary, server_stream, client_stream, bidi_stream
-  - 自动类型转换 (string → double, etc.)
-  - 连接管理和重连
+  - 自动类型转换 (string → double 等)
+  - 连接管理和自动重连
 
 - [ ] **GrpcMethodInvoker.cs** - 方法调用器
   - 解析方法路径 `control.execute`
-  - 构建 protobuf 消息 (使用 reflection)
+  - 构建 protobuf 消息 (使用反射)
   - 处理响应和错误
 
 ### 1.3 命令系统重构
@@ -48,9 +48,9 @@
   - 构建 gRPC 请求映射
 
 - [ ] **CommandExecutor.cs** - 命令执行器
-  - 执行 builtin 命令
+  - 执行 builtin 命令 (help, exit, clear 等)
   - 执行 grpc 命令 (调用 DynamicGrpcClient)
-  - 执行 macro 命令 (多步骤)
+  - 执行 macro 命令 (多步骤序列)
   - 模板渲染响应
 
 ### 1.4 模板引擎
@@ -62,7 +62,7 @@
 
 ---
 
-## Phase 2: UI 引擎 (优先级: 高)
+## 阶段 2: UI 引擎 (优先级: 高)
 
 ### 2.1 布局引擎
 - [ ] **LayoutEngine.cs** - 布局解析和构建
@@ -95,13 +95,13 @@
 
 ### 2.3 主题引擎
 - [ ] **ThemeEngine.cs** - 主题管理
-  - 颜色解析 (hex, named)
+  - 颜色解析 (hex 值, 颜色名)
   - 图标/Emoji 映射
   - 状态颜色映射
 
 ---
 
-## Phase 3: 集成和优化 (优先级: 中)
+## 阶段 3: 集成和优化 (优先级: 中)
 
 ### 3.1 REPL 重构
 - [ ] **ReplEngine.cs** - 重构主循环
@@ -122,7 +122,7 @@
 
 ---
 
-## Phase 4: 扩展功能 (优先级: 低)
+## 阶段 4: 扩展功能 (优先级: 低)
 
 ### 4.1 配置热重载
 - [ ] 监视配置文件变化
@@ -144,7 +144,7 @@
 ```
 kcode/
 ├── Config/
-│   ├── config.yaml          # 主配置 (引用其他文件)
+│   ├── config.yaml           # 主配置 (引用其他文件)
 │   ├── schema.yaml           # gRPC 服务定义
 │   ├── commands.yaml         # 命令定义
 │   ├── layout.yaml           # UI 布局定义
@@ -212,18 +212,18 @@ commands:
         text: "$input"
 
 layout:
-  simple: true  # 使用默认布局
+  simple: true                # 使用默认布局
 
 theme:
-  preset: "claude_dark"  # 使用预设主题
+  preset: "claude_dark"       # 使用预设主题
 ```
 
 ---
 
 ## 下一步行动
 
-1. **立即开始**: Phase 1.1 - 配置模型定义
-2. **并行开发**: Phase 2.1 - 布局引擎原型
+1. **立即开始**: 阶段 1.1 - 配置模型定义
+2. **并行开发**: 阶段 2.1 - 布局引擎原型
 3. **迭代验证**: 每完成一个模块就测试集成
 
 是否开始实施？
