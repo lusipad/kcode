@@ -1,7 +1,8 @@
 # KCode v2 - 开发任务计划
 
 ## 目标
-将 kcode 重构为一个**纯配置驱动的 gRPC 客户端壳**，实现：
+将 kcode 重构为一个**纯配置驱动的多协议客户端壳**，实现：
+- 支持 gRPC 和 RESTful 两种协议
 - 零代码适配不同设备
 - 动态 UI 布局
 - 可扩展的命令系统
@@ -11,9 +12,11 @@
 ## 阶段 1: 核心引擎重构 (优先级: 高)
 
 ### 1.1 配置系统重构
-- [ ] **ConfigSchema.cs** - 定义强类型配置模型
-  - GrpcConfig (endpoint, timeout, services)
-  - CommandsConfig (system, grpc, macros, aliases)
+- [ ] **ConfigModels.cs** - 定义强类型配置模型
+  - TransportConfig (type, endpoint, auth, tls)
+  - GrpcConfig (services, methods)
+  - RestConfig (endpoints, websocket)
+  - CommandsConfig (system, api, macros, aliases)
   - LayoutConfig (structure, regions)
   - ThemeConfig (colors, icons)
   - BindingsConfig (数据源映射)
@@ -24,17 +27,39 @@
   - 支持环境变量 `${ENV_VAR}`
   - 配置验证和错误报告
 
-### 1.2 动态 gRPC 客户端
-- [ ] **DynamicGrpcClient.cs** - 动态 gRPC 调用
-  - 根据 schema 配置构建请求
+### 1.2 传输层抽象
+- [ ] **ITransport.cs** - 统一传输接口
+  ```csharp
+  interface ITransport
+  {
+      Task<Response> InvokeAsync(string endpoint, object request);
+      IAsyncEnumerable<T> SubscribeAsync<T>(string endpoint);
+      Task ConnectAsync();
+      Task DisconnectAsync();
+  }
+  ```
+
+- [ ] **GrpcTransport.cs** - gRPC 实现
+  - 根据 schema 配置动态构建请求
   - 支持 unary, server_stream, client_stream, bidi_stream
   - 自动类型转换 (string → double 等)
   - 连接管理和自动重连
 
-- [ ] **GrpcMethodInvoker.cs** - 方法调用器
-  - 解析方法路径 `control.execute`
-  - 构建 protobuf 消息 (使用反射)
-  - 处理响应和错误
+- [ ] **RestTransport.cs** - REST 实现
+  - HTTP 客户端封装
+  - 支持 GET/POST/PUT/DELETE
+  - JSONPath 响应解析
+  - 认证支持 (Bearer/Basic/API Key)
+  - URL 参数和请求体构建
+
+- [ ] **WebSocketClient.cs** - WebSocket 实现
+  - 实时数据订阅
+  - 自动重连
+  - 消息解析
+
+- [ ] **PollingAdapter.cs** - 轮询适配器
+  - 将 REST GET 转换为流式数据
+  - 可配置轮询间隔
 
 ### 1.3 命令系统重构
 - [ ] **CommandRegistry.cs** - 命令注册表
@@ -45,11 +70,11 @@
 - [ ] **CommandParser.cs** - 重构命令解析器
   - 正则捕获组提取参数
   - 参数类型转换
-  - 构建 gRPC 请求映射
+  - 构建请求映射 (协议无关)
 
 - [ ] **CommandExecutor.cs** - 命令执行器
   - 执行 builtin 命令 (help, exit, clear 等)
-  - 执行 grpc 命令 (调用 DynamicGrpcClient)
+  - 执行 api 命令 (调用 ITransport)
   - 执行 macro 命令 (多步骤序列)
   - 模板渲染响应
 
@@ -83,7 +108,7 @@
 
 ### 2.2 数据绑定引擎
 - [ ] **BindingEngine.cs** - 数据绑定
-  - 订阅 gRPC 流数据
+  - 订阅流数据 (gRPC 流 / WebSocket / 轮询)
   - 数据转换和格式化
   - 触发 UI 更新
 
@@ -92,6 +117,7 @@
   - 支持路径访问 `status.x`
   - 支持格式化 `{x:F3}`
   - 支持 transform 映射
+  - JSONPath 支持 (用于 REST 响应)
 
 ### 2.3 主题引擎
 - [ ] **ThemeEngine.cs** - 主题管理
@@ -130,7 +156,8 @@
 - [ ] `/reload` 命令
 
 ### 4.2 配置生成器
-- [ ] 从 .proto 文件生成 schema 配置
+- [ ] 从 .proto 文件生成 gRPC schema 配置
+- [ ] 从 OpenAPI/Swagger 文件生成 REST schema 配置
 - [ ] 交互式配置向导
 
 ### 4.3 插件系统
@@ -145,8 +172,10 @@
 kcode/
 ├── Config/
 │   ├── config.yaml           # 主配置 (引用其他文件)
-│   ├── schema.yaml           # gRPC 服务定义
-│   ├── commands.yaml         # 命令定义
+│   ├── config-grpc.yaml      # gRPC 模式配置
+│   ├── config-rest.yaml      # REST 模式配置
+│   ├── schema.yaml           # API 接口定义
+│   ├── commands.yaml         # 命令定义 (协议无关)
 │   ├── layout.yaml           # UI 布局定义
 │   └── theme.yaml            # 主题定义
 ├── Core/
@@ -154,10 +183,13 @@ kcode/
 │   │   ├── ConfigModels.cs   # 配置模型定义
 │   │   ├── ConfigLoader.cs   # 配置加载器
 │   │   └── ConfigValidator.cs
-│   ├── Grpc/
-│   │   ├── DynamicGrpcClient.cs
-│   │   ├── GrpcMethodInvoker.cs
-│   │   └── MessageBuilder.cs
+│   ├── Transport/
+│   │   ├── ITransport.cs     # 传输层接口
+│   │   ├── GrpcTransport.cs  # gRPC 实现
+│   │   ├── RestTransport.cs  # REST 实现
+│   │   ├── WebSocketClient.cs
+│   │   ├── PollingAdapter.cs
+│   │   └── VirtualTransport.cs # 测试用
 │   ├── Commands/
 │   │   ├── CommandRegistry.cs
 │   │   ├── CommandParser.cs
@@ -188,15 +220,18 @@ kcode/
 
 ---
 
-## 配置示例 (最小可用版本)
+## 配置示例
+
+### 最小 gRPC 配置
 
 ```yaml
-# config.yaml - 最小配置
+# config.yaml - 最小 gRPC 配置
 app:
   name: "kcode"
   version: "2.0.0"
 
-grpc:
+transport:
+  type: "grpc"
   endpoint: "localhost:50051"
   
 commands:
@@ -204,10 +239,10 @@ commands:
     help: { action: "builtin:help" }
     exit: { action: "builtin:exit" }
   
-  grpc:
+  api:
     execute:
       pattern: ".*"
-      method: "control.Execute"
+      endpoint: "execute"
       request_mapping:
         text: "$input"
 
@@ -216,6 +251,47 @@ layout:
 
 theme:
   preset: "claude_dark"       # 使用预设主题
+```
+
+### 最小 REST 配置
+
+```yaml
+# config.yaml - 最小 REST 配置
+app:
+  name: "kcode"
+  version: "2.0.0"
+
+transport:
+  type: "rest"
+  base_url: "http://localhost:8080/api"
+  
+  endpoints:
+    execute:
+      method: "POST"
+      path: "/command"
+      request:
+        body: { text: "string" }
+      response:
+        success: "$.success"
+        message: "$.message"
+  
+commands:
+  system:
+    help: { action: "builtin:help" }
+    exit: { action: "builtin:exit" }
+  
+  api:
+    execute:
+      pattern: ".*"
+      endpoint: "execute"
+      request_mapping:
+        text: "$input"
+
+layout:
+  simple: true
+
+theme:
+  preset: "claude_dark"
 ```
 
 ---

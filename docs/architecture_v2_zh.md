@@ -1,11 +1,11 @@
-# KCode v2 架构设计 - 配置驱动的 gRPC 客户端壳
+# KCode v2 架构设计 - 配置驱动的多协议客户端壳
 
 ## 核心理念
 
-**KCode 本身不包含任何 CNC 业务逻辑**，它是一个：
-- **通用 gRPC 客户端** - 连接任意 gRPC 服务
+**KCode 本身不包含任何业务逻辑**，它是一个：
+- **多协议客户端** - 支持 gRPC 和 RESTful API
 - **配置驱动的 UI 渲染器** - 布局、颜色、数据绑定全部来自配置
-- **命令路由器** - 将用户输入映射到 gRPC 调用
+- **命令路由器** - 将用户输入映射到后端 API 调用
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -20,47 +20,56 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                      KCode 壳程序                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │ gRPC 客户端  │  │  命令路由器  │  │    布局引擎      │   │
-│  │  (动态调用)  │  │  (配置解析)  │  │  (Spectre.Console)│   │
+│  │  传输层抽象  │  │  命令路由器  │  │    布局引擎      │   │
+│  │ gRPC / REST  │  │  (配置解析)  │  │  (Spectre.Console)│   │
 │  └──────┬───────┘  └──────────────┘  └──────────────────┘   │
 └─────────┼───────────────────────────────────────────────────┘
           │
           ▼
-┌─────────────────────┐
-│   gRPC 服务端       │
-│  (CNC 控制器)       │
-│  (3D 打印机)        │
-│  (任意设备)         │
-└─────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      后端服务 (任选其一)                      │
+│  ┌─────────────────┐              ┌─────────────────┐       │
+│  │   gRPC Server   │      或      │   REST API      │       │
+│  │  (高性能/流式)  │              │  (简单/通用)    │       │
+│  └─────────────────┘              └─────────────────┘       │
+│         CNC 控制器 / 3D 打印机 / IoT 设备 / 任意服务         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 一、接口定义 (Schema 配置化)
+## 一、传输层配置 (Transport Schema)
 
-不再硬编码 proto 结构，而是在配置中描述 gRPC 服务的接口：
+支持 **gRPC** 和 **RESTful** 两种协议，通过配置切换：
+
+### 1.1 gRPC 配置
 
 ```yaml
-# schema.yaml - 描述 gRPC 服务接口
-grpc:
+# schema.yaml - gRPC 模式
+transport:
+  type: "grpc"
   endpoint: "localhost:50051"
   timeout_ms: 5000
+  reconnect_interval_ms: 3000
   
+  # TLS 配置 (可选)
+  tls:
+    enabled: false
+    cert_path: ""
+    
   # 服务方法定义
   services:
     control:
       package: "control"
       
       methods:
-        # 执行命令
         execute:
-          type: "unary"                              # 请求类型：一元调用
-          request: { text: "string" }                # 请求参数
-          response: { success: "bool", message: "string" }  # 响应字段
+          type: "unary"
+          request: { text: "string" }
+          response: { success: "bool", message: "string" }
         
-        # 状态流
         stream_status:
-          type: "server_stream"                      # 服务端流
+          type: "server_stream"
           request: {}
           response:
             x: "double"
@@ -72,41 +81,203 @@ grpc:
             alarm: "string"
             temp: "double"
         
-        # 获取参数
         get_parameters:
           type: "unary"
           request: {}
           response:
             parameters: "map<string, double>"
         
-        # 设置参数
         set_parameter:
           type: "unary"
           request: { key: "string", value: "double" }
           response: { success: "bool", message: "string" }
         
-        # 紧急停止
         estop:
           type: "unary"
           request: {}
           response: { success: "bool", message: "string" }
         
-        # 进给保持
         feed_hold:
           type: "unary"
           request: {}
           response: { success: "bool", message: "string" }
 ```
 
+### 1.2 RESTful API 配置
+
+```yaml
+# schema.yaml - REST 模式
+transport:
+  type: "rest"
+  base_url: "http://localhost:8080/api/v1"
+  timeout_ms: 5000
+  
+  # 认证配置 (可选)
+  auth:
+    type: "bearer"              # none / basic / bearer / api_key
+    token: "${API_TOKEN}"       # 支持环境变量
+  
+  # 请求头 (可选)
+  headers:
+    Content-Type: "application/json"
+    X-Client: "kcode"
+  
+  # API 端点定义
+  endpoints:
+    execute:
+      method: "POST"
+      path: "/command"
+      request:
+        body: { text: "string" }
+      response:
+        success: "$.success"           # JSONPath 提取
+        message: "$.message"
+    
+    get_status:
+      method: "GET"
+      path: "/status"
+      response:
+        x: "$.position.x"
+        y: "$.position.y"
+        z: "$.position.z"
+        feed: "$.feed_rate"
+        speed: "$.spindle_speed"
+        state: "$.machine_state"
+        alarm: "$.alarm_code"
+        temp: "$.temperature"
+    
+    # 轮询模式 (替代 gRPC 流)
+    poll_status:
+      method: "GET"
+      path: "/status"
+      polling:
+        enabled: true
+        interval_ms: 100              # 轮询间隔
+      response:
+        x: "$.position.x"
+        y: "$.position.y"
+        z: "$.position.z"
+        feed: "$.feed_rate"
+        speed: "$.spindle_speed"
+        state: "$.machine_state"
+        temp: "$.temperature"
+    
+    get_parameters:
+      method: "GET"
+      path: "/parameters"
+      response:
+        parameters: "$.data"          # 返回键值对数组
+    
+    set_parameter:
+      method: "PUT"
+      path: "/parameters/{key}"       # URL 参数
+      request:
+        path_params: { key: "string" }
+        body: { value: "double" }
+      response:
+        success: "$.success"
+        message: "$.message"
+    
+    estop:
+      method: "POST"
+      path: "/emergency-stop"
+      response:
+        success: "$.success"
+        message: "$.message"
+    
+    feed_hold:
+      method: "POST"
+      path: "/feed-hold"
+      request:
+        body: { toggle: "bool" }
+      response:
+        success: "$.success"
+        message: "$.message"
+
+  # WebSocket 配置 (用于实时数据，替代 gRPC 流)
+  websocket:
+    enabled: true
+    url: "ws://localhost:8080/ws/status"
+    reconnect_interval_ms: 3000
+    subscriptions:
+      status:
+        message_type: "status_update"
+        fields:
+          x: "$.x"
+          y: "$.y"
+          z: "$.z"
+          feed: "$.feed"
+          speed: "$.speed"
+          state: "$.state"
+```
+
+### 1.3 协议对比
+
+| 特性 | gRPC | RESTful |
+|------|------|---------|
+| 性能 | 高 (HTTP/2, 二进制) | 中 (HTTP/1.1, JSON) |
+| 实时数据 | 原生流支持 | WebSocket / 轮询 |
+| 调试 | 需要专用工具 | 浏览器/curl 即可 |
+| 兼容性 | 需要 proto 定义 | 通用，任何语言 |
+| 适用场景 | 高频控制、实时监控 | 简单集成、Web 服务 |
+
 ---
 
-## 二、命令系统 (Commands 配置化)
+## 二、接口定义 (Schema 配置化)
 
-所有命令都通过配置定义，包括：
-- 命令名称和别名
-- 参数解析规则
-- 映射到哪个 gRPC 方法
-- 响应如何渲染
+不再硬编码接口结构，而是在配置中描述服务的接口：
+
+```yaml
+# schema.yaml - 统一接口描述 (协议无关)
+api:
+  # 执行命令
+  execute:
+    description: "执行 G 代码或命令"
+    request: { text: "string" }
+    response: { success: "bool", message: "string" }
+  
+  # 获取状态 (实时)
+  stream_status:
+    description: "获取机器状态流"
+    stream: true                      # 标记为流式/轮询
+    response:
+      x: "double"
+      y: "double"
+      z: "double"
+      feed: "double"
+      speed: "double"
+      state: "string"
+      alarm: "string"
+      temp: "double"
+  
+  # 获取参数
+  get_parameters:
+    description: "获取所有参数"
+    response:
+      parameters: "map<string, double>"
+  
+  # 设置参数
+  set_parameter:
+    description: "设置单个参数"
+    request: { key: "string", value: "double" }
+    response: { success: "bool", message: "string" }
+  
+  # 紧急停止
+  estop:
+    description: "紧急停止"
+    response: { success: "bool", message: "string" }
+  
+  # 进给保持
+  feed_hold:
+    description: "进给保持/恢复"
+    response: { success: "bool", message: "string" }
+```
+
+---
+
+## 三、命令系统 (Commands 配置化)
+
+所有命令都通过配置定义，**协议无关** - 同样的命令定义可以用于 gRPC 或 REST：
 
 ```yaml
 # commands.yaml - 命令定义
@@ -133,12 +304,12 @@ commands:
       description: "清屏"
       action: "builtin:clear"
 
-  # gRPC 命令 (映射到服务方法)
-  grpc:
+  # API 命令 (映射到后端接口，协议无关)
+  api:
     # 直接执行 G 代码
     gcode:
       pattern: "^[GMgm]\\d+.*"           # 正则匹配 G/M 代码
-      method: "control.execute"           # 调用的 gRPC 方法
+      endpoint: "execute"                 # 调用的 API 端点 (不是 method)
       request_mapping:
         text: "$input"                    # 整个输入作为 text 字段
       response_template: |
@@ -152,7 +323,7 @@ commands:
     set:
       pattern: "^/set\\s+(\\w+)\\s+([\\d.]+)$"
       description: "设置参数 /set <键> <值>"
-      method: "control.set_parameter"
+      endpoint: "set_parameter"
       request_mapping:
         key: "$1"                         # 第一个捕获组
         value: "$2"                       # 第二个捕获组 (自动转 double)
@@ -167,7 +338,7 @@ commands:
     params:
       aliases: ["parameters", "参数"]
       description: "显示所有参数"
-      method: "control.get_parameters"
+      endpoint: "get_parameters"
       response_render: "table"            # 使用表格渲染
       table_config:
         title: "机器参数"
@@ -179,7 +350,7 @@ commands:
     reset:
       aliases: ["rst", "复位"]
       description: "清除报警"
-      method: "control.reset"
+      endpoint: "reset"
       response_template: "[green]✓[/] 报警已清除"
 
   # 宏命令 (多步骤序列)
@@ -188,23 +359,23 @@ commands:
       aliases: ["home_all", "回零"]
       description: "所有轴回零"
       steps:
-        - { method: "control.execute", request: { text: "G28" } }
+        - { endpoint: "execute", request: { text: "G28" } }
       response_template: "[green]🏠 回零完成[/]"
     
     zero_work:
       aliases: ["清零"]
       description: "设置当前位置为工件零点"
       steps:
-        - { method: "control.execute", request: { text: "G10 L20 P1 X0 Y0 Z0" } }
+        - { endpoint: "execute", request: { text: "G10 L20 P1 X0 Y0 Z0" } }
       response_template: "[green]📍 工件零点已设置[/]"
     
     auto_probe:
       aliases: ["对刀"]
       description: "自动对刀"
       steps:
-        - { method: "control.execute", request: { text: "G91 G38.2 Z-50 F50" } }
-        - { method: "control.execute", request: { text: "G90 G10 L20 P1 Z0" } }
-        - { method: "control.execute", request: { text: "G91 G0 Z5" } }
+        - { endpoint: "execute", request: { text: "G91 G38.2 Z-50 F50" } }
+        - { endpoint: "execute", request: { text: "G90 G10 L20 P1 Z0" } }
+        - { endpoint: "execute", request: { text: "G91 G0 Z5" } }
       response_template: "[green]🔧 对刀完成[/]"
 
   # 别名 (简单的命令替换)
@@ -220,11 +391,11 @@ commands:
 # 快捷键绑定
 shortcuts:
   Escape:
-    action: "grpc:control.estop"
+    action: "api:estop"                   # 协议无关的 API 调用
     feedback: "[red]🚨 紧急停止![/]"
   
   Space:
-    action: "grpc:control.feed_hold"
+    action: "api:feed_hold"
     feedback: "[yellow]⏸️ 进给保持[/]"
   
   F1:
@@ -236,7 +407,7 @@ shortcuts:
 
 ---
 
-## 三、布局系统 (Layout 配置化)
+## 四、布局系统 (Layout 配置化)
 
 UI 布局完全由配置定义，支持：
 - 区域划分 (header, body, footer, sidebar)
@@ -332,12 +503,12 @@ layout:
             bindings:
               permissions: "{meta.permissions}"
 
-# 数据绑定 - 将 gRPC 流数据绑定到 UI
+# 数据绑定 - 将后端数据绑定到 UI (协议无关)
 bindings:
-  # 状态数据源 (来自 stream_status)
+  # 状态数据源 (自动选择 gRPC 流 / WebSocket / 轮询)
   status:
-    source: "grpc:control.stream_status"
-    refresh_ms: 100                       # 刷新间隔
+    source: "stream:status"               # 引用 api.stream_status
+    refresh_ms: 100                       # 轮询模式的刷新间隔
     fields:
       x: { path: "x", format: "F3" }      # 3位小数
       y: { path: "y", format: "F3" }
@@ -369,7 +540,7 @@ bindings:
 
 ---
 
-## 四、主题系统 (Theme 配置化)
+## 五、主题系统 (Theme 配置化)
 
 ```yaml
 # theme.yaml - 主题定义
@@ -428,64 +599,131 @@ theme:
 
 ---
 
-## 五、完整配置示例
+## 六、完整配置示例
 
-将所有配置整合到一个文件中：
+### 6.1 gRPC 模式配置
 
 ```yaml
-# config.yaml - KCode 完整配置
-
+# config-grpc.yaml - gRPC 模式
 app:
   name: "kcode"
   version: "2.0.0"
 
-# 导入其他配置文件 (可选，支持模块化)
+transport:
+  type: "grpc"
+  endpoint: "localhost:50051"
+  timeout_ms: 5000
+
+# 引用通用配置
 imports:
-  - "schema.yaml"
   - "commands.yaml"
   - "layout.yaml"
   - "theme.yaml"
+```
 
-# 或者全部内联定义...
-grpc:
-  endpoint: "localhost:50051"
+### 6.2 RESTful 模式配置
+
+```yaml
+# config-rest.yaml - REST 模式
+app:
+  name: "kcode"
+  version: "2.0.0"
+
+transport:
+  type: "rest"
+  base_url: "http://localhost:8080/api/v1"
   timeout_ms: 5000
-  reconnect_interval_ms: 3000
   
-# ... (其余配置如上)
+  auth:
+    type: "bearer"
+    token: "${CNC_API_TOKEN}"
+  
+  websocket:
+    enabled: true
+    url: "ws://localhost:8080/ws/status"
+
+# 引用通用配置 (命令定义完全相同!)
+imports:
+  - "commands.yaml"
+  - "layout.yaml"
+  - "theme.yaml"
+```
+
+### 6.3 启动时选择模式
+
+```bash
+# 使用 gRPC 模式
+kcode --config config-grpc.yaml
+
+# 使用 REST 模式
+kcode --config config-rest.yaml
+
+# 或通过环境变量
+KCODE_TRANSPORT=rest kcode
 ```
 
 ---
 
-## 六、实现计划
+## 七、实现计划
 
 ### 阶段 1: 核心引擎重构
 1. **配置加载器** - 支持 YAML 解析、imports、变量引用
-2. **动态 gRPC 客户端** - 根据 schema 配置动态调用 gRPC 方法
-3. **命令解析器** - 正则匹配 + 参数提取 + 方法映射
-4. **模板引擎** - 支持 `{{if}}`, `{{range}}`, 变量替换
+2. **传输层抽象** - `ITransport` 接口，统一 gRPC/REST 调用
+3. **动态 gRPC 客户端** - 根据 schema 配置动态调用
+4. **REST 客户端** - HTTP 调用 + JSONPath 解析
+5. **WebSocket 客户端** - 实时数据订阅
+6. **命令解析器** - 正则匹配 + 参数提取 + 端点映射
+7. **模板引擎** - 支持 `{{if}}`, `{{range}}`, 变量替换
 
 ### 阶段 2: UI 引擎
 1. **布局解析器** - 将 YAML 布局转换为 Spectre.Console 组件树
-2. **数据绑定引擎** - gRPC 流 → UI 状态 → 渲染
+2. **数据绑定引擎** - 流数据 → UI 状态 → 渲染
 3. **主题引擎** - 颜色解析、图标映射
 
 ### 阶段 3: 扩展功能
 1. **插件系统** - 支持外部脚本/命令
 2. **配置热重载** - 修改配置无需重启
 3. **配置验证器** - 启动时校验配置完整性
-4. **配置生成器** - 从 .proto 文件自动生成 schema 配置
+4. **配置生成器** - 从 .proto / OpenAPI 文件自动生成配置
 
 ---
 
-## 七、优势总结
+## 八、优势总结
 
 | 特性 | 传统方式 | 配置驱动 |
 |------|----------|----------|
 | 适配新设备 | 修改代码 + 重新编译 | 修改 YAML 配置 |
+| 切换协议 | 重写通信层 | 改一行 `type: rest` |
 | 添加新命令 | 写 C# 代码 | 添加 YAML 条目 |
 | 修改 UI 布局 | 改代码 + 调试 | 改配置 + 热重载 |
 | 国际化 | 资源文件 + 代码 | 配置中直接写中文 |
 | 不同用户偏好 | 多套代码/配置 | 多个 config 文件切换 |
 
-这种架构使 KCode 成为一个**真正通用的终端 UI 框架**，不仅可以用于 CNC，还可以用于任何有 gRPC 接口的设备控制。
+---
+
+## 九、传输层架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     ITransport 接口                         │
+│  - InvokeAsync(endpoint, request) → response               │
+│  - SubscribeAsync(endpoint) → IAsyncEnumerable<data>       │
+│  - Connect() / Disconnect()                                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+│ GrpcTransport │     │ RestTransport │     │VirtualTransport│
+│               │     │               │     │  (测试用)      │
+│ - Unary 调用  │     │ - HTTP 请求   │     │               │
+│ - 流式调用    │     │ - WebSocket   │     │ - 模拟响应    │
+│               │     │ - 轮询        │     │               │
+└───────────────┘     └───────────────┘     └───────────────┘
+```
+
+这种架构使 KCode 成为一个**真正通用的终端 UI 框架**，可以连接：
+- CNC 控制器 (gRPC 高性能通信)
+- 3D 打印机 (REST API)
+- IoT 设备 (WebSocket)
+- 任何有 API 的服务
