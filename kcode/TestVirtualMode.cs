@@ -31,7 +31,8 @@ public class TestVirtualMode
 
             // 3. 创建命令系统
             AnsiConsole.MarkupLine("[yellow]3. 初始化命令系统...[/]");
-            var parser = new CommandParser(config);
+            var registry = new CommandRegistry(config);
+            var parser = new CommandParser(registry);
             var executor = new CommandExecutor(transport, config);
             AnsiConsole.MarkupLine($"[green]✓[/] 命令系统就绪\n");
 

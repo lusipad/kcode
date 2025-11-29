@@ -30,7 +30,8 @@ public class TestRestApi
             AnsiConsole.MarkupLine($"[green]✓[/] 已连接到测试 API 服务\n");
 
             // 3. 创建命令系统
-            var parser = new CommandParser(config);
+            var registry = new CommandRegistry(config);
+            var parser = new CommandParser(registry);
             var executor = new CommandExecutor(transport, config);
 
             // 4. 测试 GET 状态

@@ -1,4 +1,5 @@
-using Kcode.Core.Config;
+using System.Linq;
+using Kcode.Core.Commands;
 
 namespace Kcode.Core;
 
@@ -8,16 +9,16 @@ namespace Kcode.Core;
 /// </summary>
 public class CommandCompleter
 {
-    private readonly RootConfig _config;
+    private readonly CommandRegistry _registry;
     private readonly CommandHistory _history;
     private List<string> _cachedCommands = new();
     private int _completionIndex = 0;
     private string? _completionPrefix = null;
     private List<string>? _completionCandidates = null;
 
-    public CommandCompleter(RootConfig config, CommandHistory history)
+    public CommandCompleter(CommandRegistry registry, CommandHistory history)
     {
-        _config = config;
+        _registry = registry;
         _history = history;
         BuildCommandCache();
     }
@@ -29,17 +30,24 @@ public class CommandCompleter
     {
         _cachedCommands.Clear();
 
-        // 添加系统命令（字典的 Key 就是命令名）
-        _cachedCommands.AddRange(_config.Commands.System.Keys);
-
-        // 添加 API 命令的示例
-        foreach (var kvp in _config.Commands.ApiCommands)
+        foreach (var descriptor in _registry.SystemCommands)
         {
-            // 提取正则表达式中的固定前缀
-            var pattern = kvp.Value.Pattern;
-            if (pattern.StartsWith("^"))
+            _cachedCommands.Add(descriptor.Name);
+            _cachedCommands.AddRange(descriptor.Aliases);
+        }
+
+        foreach (var descriptor in _registry.MacroCommands)
+        {
+            _cachedCommands.Add(descriptor.Name);
+            _cachedCommands.AddRange(descriptor.Aliases);
+        }
+
+        foreach (var descriptor in _registry.ApiCommands)
+        {
+            if (!string.IsNullOrEmpty(descriptor.Config.Pattern) &&
+                descriptor.Config.Pattern.StartsWith("^"))
             {
-                var prefix = ExtractCommandPrefix(pattern);
+                var prefix = ExtractCommandPrefix(descriptor.Config.Pattern);
                 if (!string.IsNullOrEmpty(prefix))
                 {
                     _cachedCommands.Add(prefix);
@@ -47,16 +55,9 @@ public class CommandCompleter
             }
         }
 
-        // 添加宏命令（字典的 Key 就是命令名）
-        if (_config.Commands.Macros != null)
+        foreach (var alias in _registry.TextAliases.Keys)
         {
-            _cachedCommands.AddRange(_config.Commands.Macros.Keys);
-        }
-
-        // 添加别名
-        if (_config.Commands.Aliases != null)
-        {
-            _cachedCommands.AddRange(_config.Commands.Aliases.Keys);
+            _cachedCommands.Add(alias);
         }
 
         // 去重并排序

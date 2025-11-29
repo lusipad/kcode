@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Kcode.Core.Config;
 
 namespace Kcode.Core.Commands;
@@ -9,80 +8,87 @@ namespace Kcode.Core.Commands;
 /// </summary>
 public class CommandParser
 {
-    private readonly RootConfig _config;
+    private readonly CommandRegistry _registry;
 
-    public CommandParser(RootConfig config)
+    public CommandParser(CommandRegistry registry)
     {
-        _config = config;
+        _registry = registry;
     }
 
     /// <summary>
     /// 解析命令
     /// </summary>
-    public ParsedCommand? Parse(string input)
+    public ParsedCommand? Parse(string input) => ParseInternal(input, 0);
+
+    private ParsedCommand? ParseInternal(string input, int depth)
     {
         if (string.IsNullOrWhiteSpace(input))
         {
             return null;
         }
+        if (depth > 5)
+        {
+            return new ParsedCommand
+            {
+                Type = CommandType.Unknown,
+                Name = input,
+                Input = input
+            };
+        }
 
         input = input.Trim();
 
-        // 1. 检查系统命令
-        foreach (var kvp in _config.Commands.System)
+        // 1. 系统命令
+        foreach (var descriptor in _registry.SystemCommands)
         {
-            if (IsSystemCommandMatch(input, kvp.Key, kvp.Value))
+            if (descriptor.Matches(input))
             {
                 return new ParsedCommand
                 {
                     Type = CommandType.System,
-                    Name = CommandNameHelper.Normalize(kvp.Key),
+                    Name = descriptor.Name,
                     Input = input,
-                    Config = kvp.Value
+                    Config = descriptor.Config
                 };
             }
         }
 
-        // 2. 检查 API 命令 (正则匹配)
-        foreach (var kvp in _config.Commands.ApiCommands)
+        // 2. API 命令
+        foreach (var descriptor in _registry.ApiCommands)
         {
-            var match = TryMatchApiCommand(input, kvp.Value);
+            var match = TryMatchApiCommand(input, descriptor);
             if (match != null)
             {
                 return new ParsedCommand
                 {
                     Type = CommandType.Api,
-                    Name = CommandNameHelper.Normalize(kvp.Key),
+                    Name = descriptor.Name,
                     Input = input,
                     Parameters = match.Parameters,
-                    ApiConfig = kvp.Value
+                    ApiConfig = descriptor.Config
                 };
             }
         }
 
-        // 3. 检查宏命令
-        foreach (var kvp in _config.Commands.Macros)
+        // 3. 宏命令
+        foreach (var descriptor in _registry.MacroCommands)
         {
-            if (IsMacroCommandMatch(input, kvp.Key, kvp.Value))
+            if (descriptor.Matches(input))
             {
                 return new ParsedCommand
                 {
                     Type = CommandType.Macro,
-                    Name = CommandNameHelper.Normalize(kvp.Key),
+                    Name = descriptor.Name,
                     Input = input,
-                    MacroConfig = kvp.Value
+                    MacroConfig = descriptor.Config
                 };
             }
         }
 
-        // 4. 检查别名
-        foreach (var kvp in _config.Commands.Aliases)
+        // 4. 文本别名展开
+        if (_registry.TryExpandAlias(input, out var expandedInput))
         {
-            if (input.StartsWith(kvp.Key, StringComparison.OrdinalIgnoreCase))
-            {
-                var expandedInput = input.Replace(kvp.Key, kvp.Value, StringComparison.OrdinalIgnoreCase);
-                return Parse(expandedInput); // 递归解析
-            }
+            return ParseInternal(expandedInput, depth + 1);
         }
 
         // 5. 未匹配 - 可能是原始命令
@@ -97,29 +103,14 @@ public class CommandParser
     /// <summary>
     /// 检查系统命令是否匹配
     /// </summary>
-    private bool IsSystemCommandMatch(string input, string commandName, SystemCommandConfig config)
+    private CommandMatch? TryMatchApiCommand(string input, ApiCommandDescriptor descriptor)
     {
-        // 检查命令名
-        if (CommandNameHelper.Equals(input, commandName))
-        {
-            return true;
-        }
-
-        return config.Aliases.Any(alias => CommandNameHelper.Equals(input, alias));
-    }
-
-    /// <summary>
-    /// 尝试匹配 API 命令
-    /// </summary>
-    private CommandMatch? TryMatchApiCommand(string input, ApiCommandConfig config)
-    {
-        if (string.IsNullOrEmpty(config.Pattern))
+        if (descriptor.CompiledPattern == null)
         {
             return null;
         }
 
-        var regex = new Regex(config.Pattern, RegexOptions.IgnoreCase);
-        var match = regex.Match(input);
+        var match = descriptor.CompiledPattern.Match(input);
 
         if (!match.Success)
         {
@@ -140,7 +131,7 @@ public class CommandParser
 
         // 映射到请求字段
         var requestMapping = new Dictionary<string, object>();
-        foreach (var kvp in config.RequestMapping)
+        foreach (var kvp in descriptor.Config.RequestMapping)
         {
             var value = ResolveParameterValue(kvp.Value, parameters);
             requestMapping[kvp.Key] = value;
@@ -150,20 +141,6 @@ public class CommandParser
         {
             Parameters = requestMapping
         };
-    }
-
-    /// <summary>
-    /// 检查宏命令是否匹配
-    /// </summary>
-    private bool IsMacroCommandMatch(string input, string macroName, MacroCommandConfig config)
-    {
-        // 检查宏名称
-        if (CommandNameHelper.Equals(input, macroName))
-        {
-            return true;
-        }
-
-        return config.Aliases.Any(alias => CommandNameHelper.Equals(input, alias));
     }
 
     /// <summary>
@@ -218,26 +195,4 @@ public enum CommandType
 internal class CommandMatch
 {
     public Dictionary<string, object> Parameters { get; set; } = new();
-}
-
-internal static class CommandNameHelper
-{
-    public static string Normalize(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return "/";
-        }
-
-        var trimmed = value.Trim();
-        return trimmed.StartsWith("/", StringComparison.Ordinal) ? trimmed : "/" + trimmed;
-    }
-
-    public static bool Equals(string left, string right)
-    {
-        return string.Equals(
-            Normalize(left),
-            Normalize(right),
-            StringComparison.OrdinalIgnoreCase);
-    }
 }
